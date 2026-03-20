@@ -7,6 +7,12 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sentence_transformers import SentenceTransformer
 
+nltk.download('stopwords', quiet=True)
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
+nltk.download('wordnet', quiet=True)
+nltk.download('omw-1.4', quiet=True)
+
 
 def extract_text_from_pdf(file):
     extracted_text = ""
