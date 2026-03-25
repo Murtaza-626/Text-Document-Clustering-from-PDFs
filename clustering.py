@@ -11,7 +11,6 @@ def vectorize_documents(texts):
     if not texts:
         return np.array([])
     
-    # model = SentenceTransformer('all-mpnet-base-v2')
     model = SentenceTransformer('all-MiniLM-L6-v2')
     
     embeddings = []
@@ -119,7 +118,7 @@ def describe_centroids(embeddings, labels, centers, doc_names, cleaned_texts, to
         member_names   = [doc_names[i] for i in member_indices]
         member_texts   = [cleaned_texts[i] for i in member_indices]
 
-        # --- TF-IDF: find top candidate terms for the cluster ---
+        # TF-IDF: find top candidate terms for the cluster 
         try:
             tfidf = TfidfVectorizer(
                 max_features=100,
@@ -139,7 +138,7 @@ def describe_centroids(embeddings, labels, centers, doc_names, cleaned_texts, to
             # Happens when a cluster has a single very short document
             candidate_terms = []
 
-        # --- Re-rank by cosine similarity to the centroid ---
+        # Re-rank by cosine similarity to the centroid 
         centroid = centers[cluster_id]                         # shape (embedding_dim,)
         centroid_norm = centroid / (np.linalg.norm(centroid) + 1e-9)
 
