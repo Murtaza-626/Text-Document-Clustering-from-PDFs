@@ -8,15 +8,7 @@ from visualization import create_cluster_chart, df_results_table, create_silhoue
 
 # Page configuration
 st.set_page_config(page_title="DocCluster AI", page_icon="📄", layout="wide")
-st.markdown("""
-    <style>
-        [data-testid="stToolbar"] {visibility: hidden !important;}
-        [data-testid="stDecoration"] {visibility: hidden !important;}
-        [data-testid="stDeployButton"] {display: none !important;}
-        #MainMenu {visibility: hidden !important;}
-        header {visibility: hidden !important;}
-    </style>
-""", unsafe_allow_html=True)
+True)
 
 # Initialize session state
 if 'documents' not in st.session_state:
