@@ -28,7 +28,7 @@ def create_silhouette_chart(scores_dict, best_k):
     )
     return fig
 
-def create_cluster_chart(doc_names, labels, coords_2d, silhouette_score, outlier_indices=None):
+def create_cluster_chart(doc_names, labels, coords_2d, silhouette_score, outlier_indices=None, centers_2d=None):
     """
     Generates an interactive Plotly scatter plot.
     - Each dot is a document
@@ -80,6 +80,26 @@ def create_cluster_chart(doc_names, labels, coords_2d, silhouette_score, outlier
                 line=dict(width=2, color="darkred")
             )
         ))
+
+    # Overlay centroids as gold stars
+    if centers_2d is not None and len(centers_2d) > 0:
+        for i, (cx, cy) in enumerate(centers_2d):
+            fig.add_trace(go.Scatter(
+                x=[cx],
+                y=[cy],
+                mode="markers+text",
+                name=f"★ Centroid {i}",
+                text=[f"C{i}"],
+                textposition="top center",
+                hovertemplate=f"<b>Centroid {i}</b><br>x: {cx:.3f}<br>y: {cy:.3f}<extra></extra>",
+                marker=dict(
+                    symbol="star",
+                    size=20,
+                    color="gold",
+                    line=dict(width=1.5, color="darkorange")
+                ),
+                showlegend=True
+            ))
 
     return fig, df_results_table(df_viz)
 
