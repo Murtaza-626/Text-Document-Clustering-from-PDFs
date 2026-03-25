@@ -217,7 +217,7 @@ if st.session_state['embeddings'] is not None:
             st.plotly_chart(st.session_state['viz_fig'], use_container_width=True)
             st.dataframe(st.session_state['viz_table'], use_container_width=True, hide_index=True)
 
-            # --- OUTLIER SUMMARY ---
+            # Outlier Summary
             outlier_indices = st.session_state.get('outlier_indices', [])
             if outlier_indices:
                 outlier_names = [st.session_state['doc_names'][i] for i in outlier_indices]
@@ -227,7 +227,7 @@ if st.session_state['embeddings'] is not None:
             else:
                 st.success("No outliers detected — all documents fit well within their clusters.")
 
-            # --- CENTROID ELABORATION ---
+            # CENTROID ELABORATION 
             st.subheader("🎯 Cluster Centroid Elaboration")
             st.markdown(
                 "Each cluster's centroid is described by its most representative keywords, "
