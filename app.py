@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 from processor import extract_text_from_pdf, clean_and_lemmatize
-from clustering import perform_k_means, reduce_dimensions, find_best_k, find_outliers, vectorize_documents
+from clustering import perform_k_means, reduce_dimensions, find_best_k, find_outliers, vectorize_documents, describe_centroids
 import plotly.express as px
 import pandas as pd
 from visualization import create_cluster_chart, df_results_table, create_silhouette_chart
@@ -16,6 +16,8 @@ if 'embeddings' not in st.session_state:
     st.session_state['embeddings'] = None
 if 'doc_names' not in st.session_state:
     st.session_state['doc_names'] = []
+if 'prev_uploaded_names' not in st.session_state:
+    st.session_state['prev_uploaded_names'] = set()
 
 st.title("Text Document Clustering from PDFs")
 st.markdown("Automated organization of documents using Data Mining techniques.")
@@ -31,6 +33,9 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
+    current_names = set(file.name for file in uploaded_files)
+
+    # 1) Add any new files to session state
     for file in uploaded_files:
         if file.name not in st.session_state['documents']:
             with st.spinner(f"Extracting text from {file.name}..."):
@@ -43,44 +48,36 @@ if uploaded_files:
                     }
                     if file.name not in st.session_state['doc_names']:
                         st.session_state['doc_names'].append(file.name)
-    
-    st.success(f"Successfully extracted {len(st.session_state['documents'])} files.")
-    
-    # Remove files that are no longer in the uploaded list
-    currently_uploaded_names = [file.name for file in uploaded_files]
-    removed_files = [name for name in st.session_state['doc_names'] if name not in currently_uploaded_names]
-    
+
+    # 2) Detect files removed via the X button on the uploader
+    #    (files that were in the uploader last rerun but are gone now)
+    removed_files = st.session_state['prev_uploaded_names'] - current_names
     if removed_files:
         for removed_file in removed_files:
-            # Remove from documents
             if removed_file in st.session_state['documents']:
+                removed_idx = st.session_state['doc_names'].index(removed_file) if removed_file in st.session_state['doc_names'] else -1
                 del st.session_state['documents'][removed_file]
-            # Remove from doc_names
-            if removed_file in st.session_state['doc_names']:
-                st.session_state['doc_names'].remove(removed_file)
-        
-        # Regenerate embeddings to match remaining documents
-        remaining_cleaned_texts = [
-            st.session_state['documents'][name]["cleaned_text"]
-            for name in st.session_state['doc_names']
-            if st.session_state['documents'][name].get("cleaned_text") is not None
-        ]
-        
-        if remaining_cleaned_texts and len(remaining_cleaned_texts) == len(st.session_state['doc_names']):
-            # All remaining documents are cleaned, regenerate embeddings
-            st.session_state['embeddings'] = vectorize_documents(remaining_cleaned_texts)
-        else:
-            # Not all remaining documents are cleaned, clear embeddings
-            st.session_state['embeddings'] = None
-        
-        st.info(f"Removed {len(removed_files)} file(s) and updated data accordingly.")
+                if removed_file in st.session_state['doc_names']:
+                    st.session_state['doc_names'].remove(removed_file)
+                # Remove the corresponding embedding row
+                if st.session_state['embeddings'] is not None and removed_idx >= 0:
+                    if removed_idx < st.session_state['embeddings'].shape[0]:
+                        st.session_state['embeddings'] = np.delete(
+                            st.session_state['embeddings'], removed_idx, axis=0
+                        )
+                    if st.session_state['embeddings'] is not None and st.session_state['embeddings'].shape[0] == 0:
+                        st.session_state['embeddings'] = None
+        # Clear stale clustering results
+        for key in ['viz_fig', 'viz_table', 'score', 'outlier_indices', 'k_scores', 'best_k']:
+            st.session_state.pop(key, None)
+        st.info(f"Removed {len(removed_files)} file(s).")
+
+    # 3) Update tracking to current widget state
+    st.session_state['prev_uploaded_names'] = current_names
+    st.success(f"Total documents loaded: {len(st.session_state['documents'])}")
 else:
-    # No files uploaded, clear everything
-    if st.session_state['documents']:
-        st.session_state['documents'] = {}
-        st.session_state['doc_names'] = []
-        st.session_state['embeddings'] = None
-        st.info("All files removed.")
+    # Widget is empty (initial load or page refresh) — just reset tracking
+    st.session_state['prev_uploaded_names'] = set()
 
 
 # Text Preprocessing:
@@ -124,22 +121,32 @@ This maps each document into a 384-dimensional mathematical space based on its m
 """)
 
 # Check if documents exist and have been cleaned
-is_cleaned = bool(st.session_state['documents'] and list(st.session_state['documents'].values())[0].get("cleaned_text"))
+is_cleaned = bool(
+    st.session_state['documents'] and 
+    all(doc.get("cleaned_text") is not None for doc in st.session_state['documents'].values())
+)
 
 if is_cleaned:
     if st.button("Generate Document Embeddings"):
         with st.spinner("Loading model and generating semantic vectors. This may take a moment..."):
-            # Gather all cleaned texts in the exact order of doc_names
-            texts_to_vectorize = [
-                st.session_state['documents'][name]["cleaned_text"] 
-                for name in st.session_state['doc_names']
-            ]
-            
-            # Generate the embeddings
-            embeddings = vectorize_documents(texts_to_vectorize)
-            
-            # Store in session state for the clustering step
-            st.session_state['embeddings'] = embeddings
+            existing_emb = st.session_state['embeddings']
+            existing_count = existing_emb.shape[0] if existing_emb is not None else 0
+            all_names = st.session_state['doc_names']
+
+            # Only vectorize documents that don't have embeddings yet
+            new_names = all_names[existing_count:]
+
+            if new_names:
+                new_texts = [
+                    st.session_state['documents'][name]["cleaned_text"]
+                    for name in new_names
+                ]
+                new_embeddings = vectorize_documents(new_texts)
+
+                if existing_emb is not None and existing_emb.shape[0] > 0:
+                    st.session_state['embeddings'] = np.vstack([existing_emb, new_embeddings])
+                else:
+                    st.session_state['embeddings'] = new_embeddings
             
         st.success("Vectorization Complete!")
         
@@ -187,16 +194,20 @@ if st.session_state['embeddings'] is not None:
         if st.button("Run Analysis"):
             with st.spinner("Processing..."):
                 labels, centers, score = perform_k_means(st.session_state['embeddings'], k_value)
-                coords_2d = reduce_dimensions(st.session_state['embeddings'])
+                coords_2d, reducer = reduce_dimensions(st.session_state['embeddings'])
+                centers_2d = reducer.transform(centers)
                 outlier_indices = find_outliers(st.session_state['embeddings'], labels, centers)
                 fig, table_df = create_cluster_chart(
                     st.session_state['doc_names'], labels, coords_2d, score,
-                    outlier_indices=outlier_indices
+                    outlier_indices=outlier_indices,
+                    centers_2d=centers_2d
                 )
                 st.session_state['viz_fig'] = fig
                 st.session_state['viz_table'] = table_df
                 st.session_state['score'] = score
                 st.session_state['outlier_indices'] = outlier_indices
+                st.session_state['labels'] = labels
+                st.session_state['centers'] = centers
 
 
         # Display results if they exist
@@ -214,8 +225,37 @@ if st.session_state['embeddings'] is not None:
                     st.write(f"  • {name}")
             else:
                 st.success("No outliers detected — all documents fit well within their clusters.")
+
+            # --- CENTROID ELABORATION ---
+            st.subheader("🎯 Cluster Centroid Elaboration")
+            st.markdown(
+                "Each cluster's centroid is described by its most representative keywords, "
+                "ranked using **TF-IDF** importance and confirmed by **cosine similarity** "
+                "to the centroid in embedding space."
+            )
+            cleaned_texts_list = [
+                st.session_state['documents'][n]['cleaned_text']
+                for n in st.session_state['doc_names']
+            ]
+            with st.spinner("Computing centroid descriptions..."):
+                centroid_info = describe_centroids(
+                    st.session_state['embeddings'],
+                    st.session_state['labels'],
+                    st.session_state['centers'],
+                    st.session_state['doc_names'],
+                    cleaned_texts_list
+                )
+            for cluster_id, info in centroid_info.items():
+                with st.expander(f"Topic {cluster_id}  —  {len(info['documents'])} document(s)", expanded=False):
+                    if info['keywords']:
+                        st.markdown("**Top keywords:** " + "  ·  ".join(f"`{kw}`" for kw in info['keywords']))
+                    else:
+                        st.info("Not enough text to extract keywords.")
+                    st.markdown("**Documents in this cluster:**")
+                    for doc in info['documents']:
+                        st.write(f"  • {doc}")
             
-            # --- STATISTICAL SUMMARIES ---
+            # STATISTICAL SUMMARIES 
             if st.button("Generate Statistical Summaries"):
                 st.header("Cluster Statistical Summaries")
                 
