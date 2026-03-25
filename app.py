@@ -8,7 +8,7 @@ from visualization import create_cluster_chart, df_results_table, create_silhoue
 
 # Page configuration
 st.set_page_config(page_title="DocCluster AI", page_icon="📄", layout="wide")
-True)
+
 
 # Initialize session state
 if 'documents' not in st.session_state:
