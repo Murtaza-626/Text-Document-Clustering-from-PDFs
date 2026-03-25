@@ -4,6 +4,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import normalize
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 def vectorize_documents(texts):
@@ -76,7 +77,8 @@ def perform_k_means(embeddings, k):
 
 def reduce_dimensions(embeddings):
     reducer = PCA(n_components=2, random_state=42)
-    return reducer.fit_transform(embeddings)
+    coords_2d = reducer.fit_transform(embeddings)
+    return coords_2d, reducer
 
 
 def find_outliers(embeddings, labels, centers, threshold=2.0):
@@ -89,3 +91,71 @@ def find_outliers(embeddings, labels, centers, threshold=2.0):
     std = np.std(distances)
     outliers = [i for i, d in enumerate(distances) if d > avg + (threshold * std)]
     return outliers
+
+
+def describe_centroids(embeddings, labels, centers, doc_names, cleaned_texts, top_n=8):
+    """
+    Elaborates each cluster centroid with its most representative keywords.
+
+    Strategy:
+      1. Group each document's cleaned text by cluster.
+      2. Run TF-IDF on the grouped texts to surface the most distinctive
+         terms for each cluster.
+      3. Re-rank those TF-IDF candidates by their cosine similarity to the
+         centroid vector in the embedding space, so the final keywords are
+         grounded in the mathematical centre of the cluster.
+
+    Returns
+    -------
+    dict  {cluster_id: {"documents": [...], "keywords": [...]}}
+    """
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    unique_clusters = sorted(set(labels))
+    results = {}
+
+    for cluster_id in unique_clusters:
+        # Collect indices of documents in this cluster
+        member_indices = [i for i, lbl in enumerate(labels) if lbl == cluster_id]
+        member_names   = [doc_names[i] for i in member_indices]
+        member_texts   = [cleaned_texts[i] for i in member_indices]
+
+        # --- TF-IDF: find top candidate terms for the cluster ---
+        try:
+            tfidf = TfidfVectorizer(
+                max_features=100,
+                stop_words='english',
+                ngram_range=(1, 2),     # include bigrams for richer phrases
+                min_df=1
+            )
+            tfidf_matrix = tfidf.fit_transform(member_texts)
+            feature_names = tfidf.get_feature_names_out()
+
+            # Sum TF-IDF weights across all documents in the cluster
+            tfidf_scores = np.asarray(tfidf_matrix.sum(axis=0)).flatten()
+            # Keep top 30 candidates for re-ranking
+            top_candidate_idx = tfidf_scores.argsort()[::-1][:30]
+            candidate_terms = [feature_names[i] for i in top_candidate_idx]
+        except ValueError:
+            # Happens when a cluster has a single very short document
+            candidate_terms = []
+
+        # --- Re-rank by cosine similarity to the centroid ---
+        centroid = centers[cluster_id]                         # shape (embedding_dim,)
+        centroid_norm = centroid / (np.linalg.norm(centroid) + 1e-9)
+
+        if candidate_terms:
+            term_embeddings = model.encode(candidate_terms, show_progress_bar=False)
+            term_embeddings = normalize(term_embeddings, norm='l2')
+            # Cosine similarity = dot product with normalised centroid
+            similarities = term_embeddings @ centroid_norm
+            ranked_idx = similarities.argsort()[::-1]
+            top_keywords = [candidate_terms[i] for i in ranked_idx[:top_n]]
+        else:
+            top_keywords = []
+
+        results[cluster_id] = {
+            "documents": member_names,
+            "keywords":  top_keywords,
+        }
+
+    return results
