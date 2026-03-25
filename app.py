@@ -1,11 +1,10 @@
 import streamlit as st
 import numpy as np
 from processor import extract_text_from_pdf, clean_and_lemmatize
-from clustering import perform_k_means, reduce_dimensions, vectorize_documents
+from clustering import perform_k_means, reduce_dimensions, find_best_k, find_outliers, vectorize_documents
 import plotly.express as px
 import pandas as pd
-from visualization import create_cluster_chart, df_results_table
-
+from visualization import create_cluster_chart, df_results_table, create_silhouette_chart
 
 # Page configuration
 st.set_page_config(page_title="DocCluster AI", page_icon="📄", layout="wide")
@@ -85,7 +84,8 @@ else:
 
 
 # Text Preprocessing:
-st.header("Text Preprocessing")
+
+st.header("Step 2: Text Preprocessing")
 if st.session_state['documents']:
     if st.button("Clean and Preprocess Text"):
         with st.spinner("Cleaning text and applying lemmatization..."):
@@ -95,38 +95,29 @@ if st.session_state['documents']:
                     st.session_state['documents'][filename]["cleaned_text"] = cleaned
         st.success("Preprocessing Complete!")
 
-
+    # Show previews only if cleaning has been done
     first_doc = list(st.session_state['documents'].values())[0]
-    
     if first_doc.get("cleaned_text"):
-        st.markdown("### 🔍 Preprocessing Comparison")
-        
-        with st.expander("View Cleaning Results"):
-            with st.container(height=500, border=True):
+        with st.expander("🔍 View Cleaning Results"):
+            with st.container(height=500, border=True):           
                 for sample_name in st.session_state['doc_names']:
-                    doc_data = st.session_state['documents'][sample_name]
-                    
-                    if doc_data['cleaned_text'] is not None:
-                        st.markdown(f"**Document:** {sample_name}")
-                        
+                    if st.session_state['documents'][sample_name]['cleaned_text'] is not None:
+                        st.markdown(f"**Sample from:** {sample_name}")
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.caption("Raw Text (Snippet)")
-                            # Using height in text_area makes the individual snippets compact
-                            st.info(st.session_state['documents'][sample_name]['raw_text'][:1000] + "...")
-                        
+                            st.markdown("**Raw Text**")
+                            st.info(st.session_state['documents'][sample_name]['raw_text'][:400] + "...")
                         with col2:
-                            st.caption("Cleaned & Lemmatized")
-                            st.success(st.session_state['documents'][sample_name]['cleaned_text'][:1000] + "...")
-                        
+                            st.markdown("**Cleaned Text**")
+                            st.success(st.session_state['documents'][sample_name]['cleaned_text'][:400] + "...")
                         st.divider()
-                    else:
-                        st.info("Click 'Clean and Preprocess Text' to see results.")
+else:
+    st.info("Upload documents in Step 1 to proceed.")
 
 
 # STEP 3: TEXT VECTORIZATION
 
-st.header("Text Vectorization")
+st.header("Step 3: Text Vectorization")
 st.markdown("""
 Here we convert the cleaned text into **Dense Semantic Embeddings** using the `all-MiniLM-L6-v2` neural network. 
 This maps each document into a 384-dimensional mathematical space based on its meaning.
@@ -164,48 +155,68 @@ else:
     st.info("Please complete Step 2 (Preprocessing) before generating embeddings.")
 
 
-# --- STEP 4 & 5: CLUSTERING & VISUALIZATION ---
 st.header("Step 4 & 5: Clustering & Visualizing Results")
 
 if st.session_state['embeddings'] is not None:
     num_docs = len(st.session_state['doc_names'])
     
-    # Clustering is only meaningful with 3 or more documents
     if num_docs < 3:
         st.warning("Please upload at least 3 documents to perform clustering.")
     else:
-        # Maximum clusters is equal to number of documents or 10, whichever is smaller
-        max_k = min(10, num_docs)
-        
-        k_value = st.slider("Select Number of Topics (k)", 2, max_k, 2)
+        max_k = min(10, num_docs - 1)
+
+        # Auto K Suggester 
+        if st.button("🔍 Find Best k (Recommended)"):
+            with st.spinner("Testing k values from 2 to 10..."):
+                scores_dict, best_k = find_best_k(st.session_state['embeddings'], k_max=max_k)
+                st.session_state['k_scores'] = scores_dict
+                st.session_state['best_k'] = best_k
+
+        if 'k_scores' in st.session_state:
+            best_k = st.session_state['best_k']
+            st.success(f"✅ Recommended k = **{best_k}** (highest silhouette score: {st.session_state['k_scores'][best_k]})")
+            fig_k = create_silhouette_chart(st.session_state['k_scores'], best_k)
+            st.plotly_chart(fig_k, use_container_width=True)
+
+        k_value = st.slider(
+            "Select Number of Topics (k)",
+            2, max_k,
+            st.session_state.get('best_k', 2)  # defaults to suggested k if available
+        )
         
         if st.button("Run Analysis"):
             with st.spinner("Processing..."):
-                
-                # 1. Logic (clustering.py)
                 labels, centers, score = perform_k_means(st.session_state['embeddings'], k_value)
                 coords_2d = reduce_dimensions(st.session_state['embeddings'])
-                
-                # 2. Visualisation (visualisation.py)
+                outlier_indices = find_outliers(st.session_state['embeddings'], labels, centers)
                 fig, table_df = create_cluster_chart(
-                    st.session_state['doc_names'], 
-                    labels, 
-                    coords_2d, 
-                    score
+                    st.session_state['doc_names'], labels, coords_2d, score,
+                    outlier_indices=outlier_indices
                 )
-                
-                # 3. Store in session state
                 st.session_state['viz_fig'] = fig
                 st.session_state['viz_table'] = table_df
                 st.session_state['score'] = score
+                st.session_state['outlier_indices'] = outlier_indices
 
+
+        # Display results if they exist
         if 'viz_fig' in st.session_state:
             st.metric("Silhouette Score", f"{st.session_state['score']:.3f}")
             st.plotly_chart(st.session_state['viz_fig'], use_container_width=True)
             st.dataframe(st.session_state['viz_table'], use_container_width=True, hide_index=True)
+
+            # --- OUTLIER SUMMARY ---
+            outlier_indices = st.session_state.get('outlier_indices', [])
+            if outlier_indices:
+                outlier_names = [st.session_state['doc_names'][i] for i in outlier_indices]
+                st.warning(f"⚠ **{len(outlier_names)} outlier(s) detected** (shown as red ✕ on the chart):")
+                for name in outlier_names:
+                    st.write(f"  • {name}")
+            else:
+                st.success("No outliers detected — all documents fit well within their clusters.")
             
-            if st.button("Generate Cluster Summaries"):
-            # Statistical Summaries
+            # --- STATISTICAL SUMMARIES ---
+            if st.button("Generate Statistical Summaries"):
                 st.header("Cluster Statistical Summaries")
                 
                 # Get labels from the table dataframe
@@ -228,12 +239,12 @@ if st.session_state['embeddings'] is not None:
                         'Documents': ', '.join(docs_in_cluster)
                     })
                 
-                # Displaying cluster statistics
+                # Display cluster statistics
                 st.subheader("📊 Cluster Size Distribution")
                 cluster_summary_df = pd.DataFrame(cluster_stats)
                 st.dataframe(cluster_summary_df, use_container_width=True, hide_index=True)
                 
-                # Displaying cluster composition
+                # Display cluster composition
                 st.subheader("📋 Detailed Cluster Composition")
                 for cluster_id in unique_clusters:
                     docs_in_cluster = [doc_names[i] for i, label in enumerate(cluster_labels) if label == cluster_id]
