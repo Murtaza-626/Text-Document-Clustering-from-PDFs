@@ -1,3 +1,3 @@
-An automated system designed to efficiently manage large volumes of text-based files.
-This project leverages data mining and machine learning techniques to group similar PDF documents into topics automatically, eliminating the need for time-consuming manual
-document sorting.
+# Text Document Clustering from PDFs
+
+An automated system that extracts text from PDF files and groups similar documents into meaningful clusters. Using data mining and machine learning techniques, the project helps organize large collections of documents by topic, reducing the need for manual sorting.
